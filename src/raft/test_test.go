@@ -41,7 +41,7 @@ func TestInitialElection2A(t *testing.T) {
 	time.Sleep(2 * RaftElectionTimeout)
 	term2 := cfg.checkTerms()
 	if term1 != term2 {
-		fmt.Printf("warning: term changed even though there were no failures")
+		fmt.Printf("warning: term changed(%d->%d) even though there were no failures\n", term1, term2)
 	}
 
 	// there should still be a leader.
@@ -1127,7 +1127,7 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 
 		// perhaps send enough to get a snapshot
 		nn := (SnapShotInterval / 2) + (rand.Int() % SnapShotInterval)
-		for i := 0; i < nn; i++ {
+		for j := 0; j < nn; j++ {
 			cfg.rafts[sender].Start(rand.Int())
 		}
 
