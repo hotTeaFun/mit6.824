@@ -59,9 +59,9 @@ type LogEntry struct {
 }
 
 const (
-	MinElectionTimeout = 250 * time.Millisecond
-	MaxElectionTimeout = 400 * time.Millisecond
-	HeatBeatTimeout    = 100 * time.Millisecond
+	MinElectionTimeout = 150 * time.Millisecond
+	MaxElectionTimeout = 300 * time.Millisecond
+	HeatBeatTimeout    = 50 * time.Millisecond
 )
 
 func randElectionTimeout() time.Duration {
@@ -101,6 +101,10 @@ type Raft struct {
 
 	// applyCond *sync.Cond
 	applyChan chan ApplyMsg
+}
+
+func (rf *Raft) Persister() *Persister {
+	return rf.persister
 }
 
 // return currentTerm and whether this server
@@ -219,14 +223,14 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	// Case1: snapshot from older term or no sanpshot data
 	// just ignore
 	if rf.currentTerm > args.Term || args.Data == nil {
-		//log.Default().Printf("Term:[%d],Peer:[%d],Leader:[%d],InstallSnapshot term invalid or data nil\n",
+		//DPrintf("Term:[%d],Peer:[%d],Leader:[%d],InstallSnapshot term invalid or data nil\n",
 		//	rf.currentTerm, rf.me, rf.leaderId)
 		return
 	}
 	// Case2: snapshot from bigger term
 	// update term and turn to follower
 	if rf.currentTerm < args.Term {
-		//log.Default().Printf("Term:[%d],Peer:[%d],Leader:[%d],InstallSnapshot bigger Term[%d] found\n",
+		//DPrintf("Term:[%d],Peer:[%d],Leader:[%d],InstallSnapshot bigger Term[%d] found\n",
 		//	rf.currentTerm, rf.me, rf.leaderId, args.Term)
 		rf.role = RaftFollower
 		rf.currentTerm = args.Term
@@ -273,6 +277,40 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	go func() {
 		rf.applyChan <- applyMsg
 	}()
+}
+
+func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshot []byte) bool {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	DPrintf("{Node %v} service calls CondInstallSnapshot with lastIncludedTerm %v and lastIncludedIndex %v to check whether snapshot is still valid in term %v", rf.me, lastIncludedTerm, lastIncludedIndex, rf.currentTerm)
+
+	// outdated snapshot
+	if lastIncludedIndex <= rf.commitIndex {
+		DPrintf("{Node %v} rejects the snapshot which lastIncludedIndex is %v because commitIndex %v is larger", rf.me, lastIncludedIndex, rf.commitIndex)
+		return false
+	}
+
+	// Step3: clip the log
+	log := rf.log[0:1]
+	log[0].Term = lastIncludedTerm
+	if rf.lastLogIndex() > lastIncludedIndex {
+		log = append(log, rf.log[lastIncludedIndex-rf.lastIncludedIndex+1:]...)
+	}
+	rf.log = log
+	// Step4: update state
+	rf.snapshot = snapshot
+	rf.lastIncludedIndex = lastIncludedIndex
+	rf.lastIncludedTerm = lastIncludedTerm
+	if rf.lastApplied < rf.lastIncludedIndex {
+		rf.lastApplied = rf.lastIncludedIndex
+	}
+	if rf.commitIndex < rf.lastIncludedIndex {
+		rf.commitIndex = rf.lastIncludedIndex
+	}
+	// Step5: do persist
+	rf.persist()
+	// DPrintf("{Node %v}'s state is {state %v,term %v,commitIndex %v,lastApplied %v,firstLog %v,lastLog %v} after accepting the snapshot which lastIncludedTerm is %v, lastIncludedIndex is %v", rf.me, rf.state, rf.currentTerm, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog(), lastIncludedTerm, lastIncludedIndex)
+	return true
 }
 
 func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply *InstallSnapshotReply) bool {
@@ -723,7 +761,7 @@ func (rf *Raft) heartBeatLoop() {
 							} else {
 								rf.commitIndex = newCommitIndex
 							}
-							//log.Default().Printf("InstallSnap Term:[%d] Leader:[%d] new Commit Index:%d\n", rf.currentTerm, rf.leaderId, rf.commitIndex)
+							//DPrintf("InstallSnap Term:[%d] Leader:[%d] new Commit Index:%d\n", rf.currentTerm, rf.leaderId, rf.commitIndex)
 						}
 
 					}(i, argsI)
@@ -790,7 +828,7 @@ func (rf *Raft) heartBeatLoop() {
 								} else {
 									rf.commitIndex = newCommitIndex
 								}
-								//log.Default().Printf("AppendEntries Term:[%d] Leader:[%d] new Commit Index:%d\n", rf.currentTerm, rf.me, rf.commitIndex)
+								//DPrintf("AppendEntries Term:[%d] Leader:[%d] new Commit Index:%d\n", rf.currentTerm, rf.me, rf.commitIndex)
 							}
 						}
 					}(i, args)
